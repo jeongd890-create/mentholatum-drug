@@ -1,0 +1,7 @@
+mentholatum-statement-app/
+├── app.py                              # Streamlit 메인 웹 애플리케이션 (검증·단가격리·일괄 ZIP 다운로드)
+├── pdf_generator.py                    # 거래명세서 양식 복제, 데이터 기입, LibreOffice 기반 PDF 변환 모듈
+├── requirements.txt                    # Python 패키지 의존성
+├── packages.txt                        # Streamlit Cloud 리눅스 시스템 패키지 (LibreOffice + 한글 폰트)
+└── templates/
+    └── 거래명세서_동원약품(1123).xlsx   # 원본 거래명세서 엑셀 양식 (로고·직인 이미지 포함)
