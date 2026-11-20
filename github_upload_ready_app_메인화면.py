@@ -18,6 +18,7 @@ def _load_pdf_engine():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(base_dir, "pdf변환_엔진.py"),
+        os.path.join(base_dir, "github_upload_ready_pdf변환_엔진.py"),
         os.path.join(base_dir, "pdf_generator.py"),
         os.path.join(base_dir, "gemini-code-pdf_generator.py"),
     ]
@@ -257,6 +258,7 @@ def fill_statement_workbook(template_path: str, group_df: pd.DataFrame) -> Tuple
     \"\"\"
     단일 거래처(또는 단일 센터)의 주문 데이터만 격리하여 거래명세서 엑셀을 채우고
     수량/공급가액 총계 더블체크 결과를 반환합니다.
+    (출력 PDF에 제품코드는 기입하지 않음)
     \"\"\"
     wb = openpyxl.load_workbook(template_path)
     base_ws = wb.worksheets[0]
@@ -316,7 +318,7 @@ def fill_statement_workbook(template_path: str, group_df: pd.DataFrame) -> Tuple
             amt = qty * price
 
             ws.cell(r, 1).value = p_idx * max_slots + idx + 1
-            ws.cell(r, 2).value = item["pcode"]
+            ws.cell(r, 2).value = None
             ws.cell(r, 3).value = item["pname"]
             ws.cell(r, 9).value = int(item["pack_size"])
             ws.cell(r, 11).value = qty
@@ -471,9 +473,9 @@ def _find_template_path() -> str:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(base_dir, "거래명세서_양식_동원약품(1123).xlsx"),
+        os.path.join(base_dir, "github_upload_ready_거래명세서_양식_동원약품(1123).xlsx"),
         os.path.join(base_dir, "거래명세서_동원약품(1123).xlsx"),
         os.path.join(base_dir, "양식", "거래명세서_양식_동원약품(1123).xlsx"),
-        os.path.join(base_dir, "양식", "거래명세서_동원약품(1123).xlsx"),
         os.path.join(base_dir, "templates", "거래명세서_동원약품(1123).xlsx"),
     ]
     for path in candidates:
@@ -492,7 +494,7 @@ st.caption(
 with st.expander("📌 적용된 생성 규칙 및 보안 검증 기준 확인", expanded=False):
     st.markdown(
         """
-        - **양식 변환**: 거래명세서 엑셀 양식 서식·로고·직인 그대로 PDF 변환
+        - **양식 변환**: 거래명세서 엑셀 양식 서식·로고·직인 그대로 PDF 변환 (제품코드 미기입)
         - **출력 단위**: 일반 거래처는 **거래처별 1부**, **백제약품·지오영은 배송센터별 1부** 분리 생성
         - **ZPK 제외**: `ZPK` 주문 건은 거래명세표 출력 대상에서 자동 제외
         - **일자 및 상호**: `주문일자 = 수주일자`, `배송일자 = 납품일자`, `상호 = 거래처명(센터명)` 자동 기입
