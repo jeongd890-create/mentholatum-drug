@@ -225,6 +225,7 @@ def fill_statement_workbook(template_path: str, group_df: pd.DataFrame) -> Tuple
     """
     단일 거래처(또는 단일 센터)의 주문 데이터만 격리하여 거래명세서 엑셀을 채우고
     수량/공급가액 총계 더블체크 결과를 반환합니다.
+    (출력 PDF에 제품코드는 기입하지 않음)
     """
     wb = openpyxl.load_workbook(template_path)
     base_ws = wb.worksheets[0]
@@ -284,7 +285,7 @@ def fill_statement_workbook(template_path: str, group_df: pd.DataFrame) -> Tuple
             amt = qty * price
 
             ws.cell(r, 1).value = p_idx * max_slots + idx + 1
-            ws.cell(r, 2).value = item["pcode"]
+            ws.cell(r, 2).value = None           # 제품코드 미기입
             ws.cell(r, 3).value = item["pname"]
             ws.cell(r, 9).value = int(item["pack_size"])
             ws.cell(r, 11).value = qty
@@ -323,7 +324,7 @@ def fill_statement_workbook(template_path: str, group_df: pd.DataFrame) -> Tuple
 def convert_xlsx_to_pdf(xlsx_bytes: bytes, base_filename: str) -> bytes:
     """LibreOffice Headless를 호출하여 스타일·이미지가 보존된 PDF 바이트 생성"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        safe_name = re.sub(r'[\/*?:"<>|]', "_", base_filename)
+        safe_name = re.sub(r'[\\/*?:"<>|]', "_", base_filename)
         xlsx_path = os.path.join(tmpdir, f"{safe_name}.xlsx")
         with open(xlsx_path, "wb") as f:
             f.write(xlsx_bytes)
@@ -398,7 +399,7 @@ def generate_all_statements_zip(
 
             deliv_dt = parse_yyyymmdd(isolated_grp.iloc[0]["delivery_date"])
             mmdd = deliv_dt.strftime("%m%d")
-            safe_label = re.sub(r'[\/*?:"<>|]', "_", str(isolated_grp.iloc[0]["file_label"]))
+            safe_label = re.sub(r'[\\/*?:"<>|]', "_", str(isolated_grp.iloc[0]["file_label"]))
             pdf_filename = f"거래명세서_{safe_label}({mmdd}).pdf"
 
             pdf_bytes = convert_xlsx_to_pdf(xlsx_bytes, f"거래명세서_{safe_label}({mmdd})")
