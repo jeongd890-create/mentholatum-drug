@@ -1,3 +1,2 @@
 libreoffice
 fonts-nanum
-fonts-nanum-coding
