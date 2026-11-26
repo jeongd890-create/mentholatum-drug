@@ -57,32 +57,59 @@ def parse_yyyymmdd(val) -> datetime.datetime:
     return datetime.datetime.today()
 
 
-def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def _to_int(val, default: int = 0) -> int:
+    if val is None or isinstance(val, bool):
+        return default
+    if isinstance(val, (int, float)):
+        if math.isnan(float(val)) or math.isinf(float(val)):
+            return default
+        return int(round(float(val)))
+    s = str(val).strip()
+    if not s or s.startswith("="):
+        return default
+    cleaned = re.sub(r"[^0-9.-]", "", s)
+    if not cleaned:
+        return default
+    try:
+        return int(round(float(cleaned)))
+    except ValueError:
+        return default
+
+
+def load_orders_from_workbook(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]:
     \"\"\"
-    거래처별_주문입력_및_수주업로드_v7.xlsx에서
+    거래처별_주문입력_및_수주업로드_약국_수정본-v3.xlsx에서
     1) 백제약품_주문입력, 지오영_주문입력, 타거래처_주문입력 시트의 양수 주문 직접 추출
     2) 수주업로드_서식 시트 캐시값과 교차 검증용 데이터 반환
     \"\"\"
     wb_val = openpyxl.load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_code = wb_val["거래처코드"]
+    cust_to_bill_map: Dict[str, int] = {}
     bill_to_name_map: Dict[int, str] = {}
     ship_to_center_map: Dict[int, str] = {}
+
     for r in range(2, ws_code.max_row + 1):
         cust_nm = ws_code.cell(r, 2).value
         b_cd = ws_code.cell(r, 3).value
         center_nm = ws_code.cell(r, 5).value
         s_cd = ws_code.cell(r, 6).value
-        if b_cd is not None and cust_nm:
-            b_int = int(float(b_cd))
-            if b_int == 86030001:
-                bill_to_name_map[b_int] = "백제약품"
-            elif b_int == 86049000:
-                bill_to_name_map[b_int] = "지오영"
-            else:
-                bill_to_name_map[b_int] = str(cust_nm).strip()
-        if s_cd is not None and center_nm:
-            ship_to_center_map[int(float(s_cd))] = str(center_nm).strip()
+
+        b_int = _to_int(b_cd, default=0)
+        if cust_nm and str(cust_nm).strip():
+            c_str = str(cust_nm).strip()
+            if b_int > 0:
+                cust_to_bill_map[c_str] = b_int
+                if b_int == 86030001:
+                    bill_to_name_map[b_int] = "백제약품"
+                elif b_int == 86049000:
+                    bill_to_name_map[b_int] = "지오영"
+                elif b_int not in bill_to_name_map:
+                    bill_to_name_map[b_int] = c_str
+
+        s_int = _to_int(s_cd, default=0)
+        if s_int > 0 and center_nm and str(center_nm).strip():
+            ship_to_center_map[s_int] = str(center_nm).strip()
 
     ws_price = wb_val["단가정리"]
     pack_map: Dict[str, int] = {}
@@ -92,29 +119,34 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
 
     for r in range(2, ws_price.max_row + 1):
         bc = ws_price.cell(r, 1).value
-        if bc:
+        if bc and not str(bc).startswith("="):
             bc_s = str(bc).strip()
-            pack_map[bc_s] = int(ws_price.cell(r, 3).value or 1)
-            baekje_price_map[bc_s] = int(ws_price.cell(r, 4).value or 0)
+            p_cnt = _to_int(ws_price.cell(r, 3).value, default=1)
+            pack_map[bc_s] = p_cnt if p_cnt > 0 else 1
+            baekje_price_map[bc_s] = _to_int(ws_price.cell(r, 4).value, default=0)
+
         gc = ws_price.cell(r, 6).value
-        if gc:
+        if gc and not str(gc).startswith("="):
             gc_s = str(gc).strip()
-            pack_map[gc_s] = int(ws_price.cell(r, 8).value or 1)
-            geoyoung_price_map[gc_s] = int(ws_price.cell(r, 9).value or 0)
+            p_cnt = _to_int(ws_price.cell(r, 8).value, default=1)
+            pack_map[gc_s] = p_cnt if p_cnt > 0 else 1
+            geoyoung_price_map[gc_s] = _to_int(ws_price.cell(r, 9).value, default=0)
+
         ocust = ws_price.cell(r, 11).value
         ocode = ws_price.cell(r, 12).value
-        if ocust and ocode:
+        if ocust and ocode and not str(ocode).startswith("="):
             oc_s = str(ocust).strip()
             op_s = str(ocode).strip()
-            pack_map[op_s] = int(ws_price.cell(r, 14).value or 1)
-            other_price_map[(oc_s, op_s)] = int(ws_price.cell(r, 15).value or 0)
+            p_cnt = _to_int(ws_price.cell(r, 14).value, default=1)
+            pack_map[op_s] = p_cnt if p_cnt > 0 else 1
+            other_price_map[(oc_s, op_s)] = _to_int(ws_price.cell(r, 15).value, default=0)
 
     ws_prod = wb_val["상품"]
     prod_name_map: Dict[str, str] = {}
     for r in range(2, ws_prod.max_row + 1):
         pc = ws_prod.cell(r, 2).value
         pn = ws_prod.cell(r, 3).value
-        if pc and pn:
+        if pc and pn and not str(pc).startswith("="):
             prod_name_map[str(pc).strip()] = str(pn).strip()
 
     order_sheets = [
@@ -128,6 +160,8 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
     tomorrow_int = int((datetime.datetime.today() + datetime.timedelta(days=1)).strftime("%Y%m%d"))
 
     for sh_name, fixed_bill_to in order_sheets:
+        if sh_name not in wb_val.sheetnames:
+            continue
         ws_v = wb_val[sh_name]
 
         for r in range(2, ws_v.max_row + 1):
@@ -135,14 +169,12 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
                 continue
 
             pcode = ws_v.cell(r, 8).value
-            if not pcode or str(pcode).startswith("="):
+            if not pcode or str(pcode).strip().startswith("="):
                 continue
             pcode = str(pcode).strip()
 
-            sales_qty = ws_v.cell(r, 11).value
-            promo_qty = ws_v.cell(r, 12).value
-            sales_qty = int(float(sales_qty)) if isinstance(sales_qty, (int, float)) else 0
-            promo_qty = int(float(promo_qty)) if isinstance(promo_qty, (int, float)) else 0
+            sales_qty = _to_int(ws_v.cell(r, 11).value, default=0)
+            promo_qty = _to_int(ws_v.cell(r, 12).value, default=0)
 
             if sales_qty <= 0 and promo_qty <= 0:
                 continue
@@ -156,21 +188,23 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
 
             if fixed_bill_to is not None:
                 bill_to = fixed_bill_to
-                ship_to = int(float(ws_v.cell(r, 6).value))
-                cust_name = bill_to_name_map.get(bill_to, "백제약품" if bill_to == 86030001 else "지오영")
-                center_name = ship_to_center_map.get(ship_to, str(ws_v.cell(r, 5).value or ""))
+                ship_to = _to_int(ws_v.cell(r, 6).value, default=bill_to)
+                cust_name = bill_to_name_map.get(
+                    bill_to, "백제약품" if bill_to == 86030001 else "지오영"
+                )
+                center_name = ship_to_center_map.get(ship_to, str(ws_v.cell(r, 5).value or "").strip())
             else:
                 cust_name = str(ws_v.cell(r, 4).value or "").strip()
-                bill_raw = ws_v.cell(r, 5).value
-                ship_raw = ws_v.cell(r, 6).value
-                bill_to = int(float(bill_raw))
-                ship_to = int(float(ship_raw)) if ship_raw is not None else bill_to
+                if not cust_name:
+                    continue
+                bill_to = _to_int(ws_v.cell(r, 5).value, default=0)
+                if bill_to <= 0:
+                    bill_to = cust_to_bill_map.get(cust_name, 0)
+                ship_to = _to_int(ws_v.cell(r, 6).value, default=bill_to)
                 center_name = ""
 
-            raw_price = ws_v.cell(r, 13).value
-            if isinstance(raw_price, (int, float)) and raw_price > 0:
-                unit_price = int(round(float(raw_price)))
-            else:
+            unit_price = _to_int(ws_v.cell(r, 13).value, default=-1)
+            if unit_price <= 0:
                 if bill_to == 86030001:
                     unit_price = baekje_price_map.get(pcode, 0)
                 elif bill_to == 86049000:
@@ -178,9 +212,13 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
                 else:
                     unit_price = other_price_map.get((cust_name, pcode), 0)
 
-            pack_size = ws_v.cell(r, 10).value
-            pack_size = int(float(pack_size)) if isinstance(pack_size, (int, float)) and pack_size > 0 else pack_map.get(pcode, 1)
-            pname = prod_name_map.get(pcode, str(ws_v.cell(r, 9).value or pcode).strip())
+            pack_size = _to_int(ws_v.cell(r, 10).value, default=0)
+            if pack_size <= 0:
+                pack_size = pack_map.get(pcode, 1)
+
+            raw_pname = ws_v.cell(r, 9).value
+            fallback_pname = str(raw_pname).strip() if raw_pname and not str(raw_pname).startswith("=") else pcode
+            pname = prod_name_map.get(pcode, fallback_pname)
 
             is_zpk = (bill_to == 86020000) or (cust_name.upper() == "ZPK")
 
@@ -189,7 +227,7 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
                 display_customer = f"{cust_name} ({center_name})" if center_name else cust_name
                 file_label = f"{cust_name}_{center_name}" if center_name else cust_name
             else:
-                group_key = f"{bill_to}"
+                group_key = f"{bill_to}_{cust_name}" if bill_to > 0 else f"OTHER_{cust_name}"
                 display_customer = cust_name
                 file_label = cust_name
 
@@ -237,21 +275,25 @@ def load_orders_from_v7(excel_bytes: bytes) -> Tuple[pd.DataFrame, pd.DataFrame]
 
     df_all = pd.DataFrame(records)
 
-    ws_up = wb_val["수주업로드_서식"]
     up_rows = []
-    for r in range(2, ws_up.max_row + 1):
-        b_val = ws_up.cell(r, 4).value
-        q_val = ws_up.cell(r, 10).value
-        a_val = ws_up.cell(r, 12).value
-        if b_val and isinstance(q_val, (int, float)) and q_val > 0:
-            up_rows.append({
-                "bill_to": int(float(b_val)),
-                "ship_to": int(float(ws_up.cell(r, 6).value or b_val)),
-                "qty": int(float(q_val)),
-                "amount": int(round(float(a_val or 0))),
-            })
+    if "수주업로드_서식" in wb_val.sheetnames:
+        ws_up = wb_val["수주업로드_서식"]
+        for r in range(2, ws_up.max_row + 1):
+            b_val = _to_int(ws_up.cell(r, 4).value, default=0)
+            q_val = _to_int(ws_up.cell(r, 10).value, default=0)
+            a_val = _to_int(ws_up.cell(r, 12).value, default=0)
+            if b_val > 0 and q_val > 0:
+                up_rows.append({
+                    "bill_to": b_val,
+                    "ship_to": _to_int(ws_up.cell(r, 6).value, default=b_val),
+                    "qty": q_val,
+                    "amount": a_val,
+                })
     df_upload_cache = pd.DataFrame(up_rows)
     return df_all, df_upload_cache
+
+
+load_orders_from_v7 = load_orders_from_workbook
 
 
 def fill_statement_workbook(template_path: str, group_df: pd.DataFrame) -> Tuple[bytes, dict]:
@@ -389,7 +431,7 @@ def generate_all_statements_zip(
     \"\"\"
     전체 거래처·센터별 거래명세서 PDF를 일괄 생성하고 ZIP 아카이브와 더블체크 리포트를 반환
     \"\"\"
-    df_all, df_upload_cache = load_orders_from_v7(order_excel_bytes)
+    df_all, df_upload_cache = load_orders_from_workbook(order_excel_bytes)
     if df_all.empty:
         return b"", pd.DataFrame(), []
 
@@ -462,7 +504,9 @@ def generate_all_statements_zip(
 try:
     _engine = _load_pdf_engine()
     generate_all_statements_zip = _engine.generate_all_statements_zip
-    load_orders_from_v7 = _engine.load_orders_from_v7
+    load_orders_from_workbook = getattr(
+        _engine, "load_orders_from_workbook", _engine.load_orders_from_v7
+    )
 except Exception as e:
     st.error(f"PDF 변환 엔진 초기화 오류: {e}")
     st.stop()
@@ -472,10 +516,10 @@ def _find_template_path() -> str:
     """양식 엑셀 파일 경로 탐색 (루트, 양식폴더, templates 폴더 모두 지원)"""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.join(base_dir, "거래명세서_동원약품(1123).xlsx"),
         os.path.join(base_dir, "거래명세서_양식_동원약품(1123).xlsx"),
         os.path.join(base_dir, "github_upload_ready_거래명세서_양식_동원약품(1123).xlsx"),
-        os.path.join(base_dir, "거래명세서_동원약품(1123).xlsx"),
-        os.path.join(base_dir, "양식", "거래명세서_양식_동원약품(1123).xlsx"),
+        os.path.join(base_dir, "양식", "거래명세서_동원약품(1123).xlsx"),
         os.path.join(base_dir, "templates", "거래명세서_동원약품(1123).xlsx"),
     ]
     for path in candidates:
@@ -488,7 +532,7 @@ TEMPLATE_PATH = _find_template_path()
 
 st.title("📄 거래명세표 PDF 자동 생성 및 검증 시스템")
 st.caption(
-    "`거래처별_주문입력_및_수주업로드_v7.xlsx` 파일을 업로드하면 거래처별·센터별 거래명세표 PDF를 일괄 생성합니다."
+    "`거래처별_주문입력_및_수주업로드_약국_수정본-v3.xlsx` 파일을 업로드하면 거래처별·센터별 거래명세표 PDF를 일괄 생성합니다."
 )
 
 with st.expander("📌 적용된 생성 규칙 및 보안 검증 기준 확인", expanded=False):
@@ -504,13 +548,13 @@ with st.expander("📌 적용된 생성 규칙 및 보안 검증 기준 확인",
     )
 
 uploaded_order = st.file_uploader(
-    "1️⃣ 수주 파일 업로드 (`거래처별_주문입력_및_수주업로드_v7.xlsx`)",
+    "1️⃣ 수주 파일 업로드 (`거래처별_주문입력_및_수주업로드_약국_수정본-v3.xlsx`)",
     type=["xlsx"],
 )
 
 if not os.path.exists(TEMPLATE_PATH):
     st.error(
-        "거래명세서 양식 엑셀 파일(`거래명세서_양식_동원약품(1123).xlsx` 또는 `거래명세서_동원약품(1123).xlsx`)을 찾을 수 없습니다. "
+        "거래명세서 양식 엑셀 파일(`거래명세서_동원약품(1123).xlsx`)을 찾을 수 없습니다. "
         "GitHub 레포지토리에 양식 엑셀 파일을 함께 업로드해 주세요."
     )
     st.stop()
@@ -519,7 +563,7 @@ if uploaded_order is not None:
     order_bytes = uploaded_order.getvalue()
 
     with st.spinner("주문 데이터 분석, 단가 격리 검증 및 거래명세표 PDF 변환 중..."):
-        df_all, _ = load_orders_from_v7(order_bytes)
+        df_all, _ = load_orders_from_workbook(order_bytes)
 
         if df_all.empty:
             st.warning("업로드된 파일에 양수(`>0`)로 입력된 주문 내역이 없습니다.")
